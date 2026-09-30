@@ -4,7 +4,7 @@ from typing import Dict, Any, List
 from openai import AsyncOpenAI
 
 from app.core.config import settings
-from app.rag.engine import RAGEngine
+from app.rag.chroma_engine import ChromaRAGEngine as RAGEngine
 
 # 1. 初始化标准异步大模型客户端
 client = AsyncOpenAI(
