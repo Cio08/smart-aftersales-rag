@@ -1,0 +1,13 @@
+#fastapi & uvicorn：现代高性能 Web 接口框架与驱动它的 Web 服务器。
+fastapi>=0.115.0
+uvicorn>=0.30.0
+#pydantic：数据格式自动校验与接口防护。
+pydantic>=2.8.0
+#openai：调用 DeepSeek / OpenAI 大模型的标准官方异步 SDK。
+openai>=1.40.0
+#httpx：我们在【任务 4】学到的非阻塞异步网络请求库。
+httpx>=0.27.0
+#python-dotenv：自动读取本地 .env 密钥配置。
+python-dotenv>=1.0.1
+#numpy：计算向量空间距离（余弦相似度）的底层数学加速库。
+numpy>=2.0.0
