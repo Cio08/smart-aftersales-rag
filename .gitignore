@@ -1,0 +1,24 @@
+# 1. 虚拟运行环境（严禁上传）
+.venv/
+venv/
+ENV/
+
+# 2. Python 编译生成的临时缓存
+__pycache__/
+*.py[cod]
+*$py.class
+
+# 3. 密钥与本地环境变量（商业安全红线）
+.env
+*.local
+
+# 4. 本地数据库与临时数据
+*.sqlite3
+*.db
+data/cache/
+
+# 5. IDE 编辑器配置与系统临时文件
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
