@@ -1,6 +1,7 @@
 from fastapi import FastAPI
 from pydantic import BaseModel, Field
 from typing import List, Dict, Any, Optional
+from fastapi.responses import StreamingResponse
 
 
 from app.core.config import settings
@@ -34,6 +35,18 @@ async def chat(request: ChatRequest):
         "answer": result["answer"],
         "references": result["references"]
     }
+
+# 新增：流式打字机专用接口！
+@app.post("/api/v1/chat/stream")
+async def chat_stream(request: ChatRequest):
+    """
+    流式打字机接口：
+    直接把 RAG 生成器对接给客户端，实现毫秒级首字响应！
+    """
+    return StreamingResponse(
+        RAGService.ask_stream(request.question),
+        media_type="text/plain; charset=utf-8"
+    )
 
 if __name__ == '__main__':
     import uvicorn

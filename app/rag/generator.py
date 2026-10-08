@@ -1,4 +1,5 @@
 import asyncio
+from codeop import PyCF_DONT_IMPLY_DEDENT
 from pathlib import Path
 from typing import Dict, Any, List
 from openai import AsyncOpenAI
@@ -88,6 +89,40 @@ class RAGService:
             "references": reference_info
         }
 
+    @classmethod
+    async def ask_stream(cls,query:str):
+        """
+           核心异步流式问答水龙头：
+           1. 检索知识库
+           2. 开启大模型流式传输
+           3. 用 yield 逐字实时吐出回答文本
+        """
+        # 第一步：检索相关知识手册
+        hits = engine.search(query, top_k=2)
+        full_prompt = cls._build_prompt(query,hits)
+
+        # 第二步：调用大模型，打开流式阀门 stream=True！
+        response = await client.chat.completions.create(
+            model=settings.LLM_MODEL,
+            messages=[
+                {"role": "system", "content": "你是由顺德智能制造基地训练的企业级售后服务专家。"},
+                {"role": "user", "content": full_prompt}
+            ],
+            stream=True,
+            temperature=0.1
+        )
+
+        # 第三步：只要网线收到一个字，立刻用 yield 吐给外面！
+        async for chunk in response:
+            content = chunk.choices[0].delta.content or ""
+            if content:
+                yield content
+
+        # 第四步：打字结束后，顺手在末尾吐出参考手册溯源！
+        if hits:
+            yield "\n\n---\n📚 **参考官方手册溯源：**\n"
+            for h in hits:
+                yield f"- 《{h['title']}》 (相似度得分: {h['similarity_score']})\n"
 
 # 本地异步自测逻辑
 if __name__ == "__main__":
@@ -95,14 +130,9 @@ if __name__ == "__main__":
         test_q = "师傅你好，我洗碗机报错 E01 该怎么修？"
         print(f"📡 正在向大模型发起异步提问: 【{test_q}】...\n")
 
-        result = await RAGService.ask(test_q)
-
-        print("=" * 50)
-        print("🤖 AI 专家回复：")
-        print(result["answer"])
-        print("\n📚 参考手册溯源：", result["references"])
-        print("=" * 50)
-
+        # 用 async for 接住我们新写的流式水龙头！
+        async for word in RAGService.ask_stream(test_q):
+            print(word, end="", flush=True)
 
     # 启动 Python 异步事件循环
     asyncio.run(test())

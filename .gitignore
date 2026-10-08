@@ -16,6 +16,7 @@ __pycache__/
 *.sqlite3
 *.db
 data/cache/
+test/
 
 # 5. IDE 编辑器配置与系统临时文件
 .idea/
