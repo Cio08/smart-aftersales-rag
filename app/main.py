@@ -16,7 +16,8 @@ app = FastAPI(
 class ChatRequest(BaseModel):
     # ... 代表必填字段
     question: str = Field(..., min_length=2, description="用户提问")
-    user_id: Optional[str] = "guest"
+    user_id: Optional[str] = Field(default="guest", description="用户标识")
+    session_id: Optional[str] = Field(default="default", description="会话标识，用于多轮记忆")
 
 # 接口返回给前端的结构
 class ChatResponse(BaseModel):
@@ -44,7 +45,7 @@ async def chat_stream(request: ChatRequest):
     直接把 RAG 生成器对接给客户端，实现毫秒级首字响应！
     """
     return StreamingResponse(
-        RAGService.ask_stream(request.question),
+        RAGService.ask_stream(request.question, session_id=request.session_id),
         media_type="text/plain; charset=utf-8"
     )
 
