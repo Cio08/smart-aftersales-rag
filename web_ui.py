@@ -18,7 +18,7 @@ with st.sidebar:
     if "session_id" not in st.session_state:
         st.session_state.session_id = f"user_{uuid.uuid4().hex[:6]}"
 
-        st.info(f"🆔 当前会话: `{st.session_state.session_id}`")
+    st.info(f"🆔 当前会话: `{st.session_state.session_id}`")
 
     # 开启新会话按钮：清空抽屉，重置对话
     if st.button("🧹 开启新对话", use_container_width=True):
