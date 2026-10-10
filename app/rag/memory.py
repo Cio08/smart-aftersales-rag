@@ -23,7 +23,7 @@ class SessionMemory:
 
         # 核心：使用负数切片 [-6:]，永远只保留最近的最新对话，防止撑爆上下文！
         if len(self._store[session_id]) > self.max_messages:
-            self._store[session_id] = self._store[session_id][-self.max_messages]
+            self._store[session_id] = self._store[session_id][-self.max_messages:]
 
 # 单例导出供全项目使用
 session_memory = SessionMemory(max_history_turns=3)

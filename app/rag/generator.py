@@ -2,7 +2,8 @@ import asyncio
 from idlelib import history
 from pathlib import Path
 from typing import Dict, Any, List
-from openai import AsyncOpenAI
+from openai import AsyncOpenAI, admin_api_key
+from pygments.styles.dracula import yellow
 
 from app.core.config import settings
 from app.rag.chroma_engine import ChromaRAGEngine as RAGEngine
@@ -128,60 +129,100 @@ class RAGService:
     @classmethod
     async def ask_stream(cls, query: str, session_id: str = "default"):
         """
-        升级版流式问答水龙头（支持多轮记忆于指代小姐）
+        具备意图路由和阈值门禁的终极流式问答水龙头
         :param query: 当前提问
         :param session_id: 用户id
         :return:
         """
+        try:
+            # 第一步：前台分诊台识别意图
+            intent = await cls.classify_intent(query)
+            full_assistant_reply = ""
 
-        # 1. 取出当前用户的历史记忆
-        history = session_memory.get_history(session_id)
+            # -------------------------------------------------------------
+            # 🟢 分支 A：日常闲聊问候（CHITCHAT）➔ 不查知识库，极速礼貌回复！
+            # -------------------------------------------------------------
 
-        # 2.如果有历史，自动执行指代消解重写
-        search_query = query
-        if history:
-            search_query = await cls.rewrite_query(history, query)
-            # 贴心提示：如果发生了改写，悄悄在最开始提示一下改写后的问题
-            if search_query != query:
-                yield f"💡 *[智能理解：已结合上下文将提问理解为「{search_query}」]*\n\n"
+            if intent == "CHITCHAT":
+                response = await client.chat.completions.create(
+                    model=settings.LLM_MODEL,
+                    messages=[
+                        {"role": "system",
+                         "content": "你是顺德家电智能制造基地的官方售后专家，请以亲切、热情、专业的口吻回复客户的日常问候，并主动询问有什么家电故障可以协助排查。"},
+                        {"role": "user", "content": query}
+                    ],
+                    stream=True,
+                    temperature=0.7
+                )
+                async for chunk in response:
+                    content = chunk.choices[0].delta.content or ""
+                    if content:
+                        full_assistant_reply += content
+                        yield content
 
-        # 3.拿着最精准的搜索词去查 ChromaDB
-        hits = engine.search(search_query, top_k=2)
-        full_prompt = cls._build_prompt(search_query, hits)
+                # 存入记忆并直接结束！
+                session_memory.add_turn(session_id, query, full_assistant_reply)
+                return
 
-        # 4. 调用大模型开启流式传输
-        # 构造发给大模型的消息：包含历史对话 + 当前增强提问
-        messages = [{"role": "system", "content": "你是由顺德智能制造基地训练的企业级售后服务专家。"}]
-        # 塞入历史消息（最近 3 轮）
-        for msg in history:
-            messages.append(msg)
-        # 塞入当前带着手册知识的完整 Prompt
-        messages.append({"role": "user", "content": full_prompt})
+            # -------------------------------------------------------------
+            # 🔴 分支 B：真实故障报修（FAULT_DIAGNOSIS）➔ 走专业 RAG 流程
+            # -------------------------------------------------------------
 
-        response = await client.chat.completions.create(
-            model=settings.LLM_MODEL,
-            messages=messages,
-            stream=True,
-            temperature=0.1
-        )
+            # 1. 取出当前用户的历史记忆
+            history = session_memory.get_history(session_id)
 
-        # 5.一遍yield吐字i，一边在后台攒完整回答，用于记入会话历史
-        full_assistant_reply = ""
-        async for chunk in response:
-            content = chunk.choices[0].delta.content or ""
-            if content:
-                full_assistant_reply += content
-                yield content
+            # 2.如果有历史，自动执行指代消解重写
+            search_query = query
+            if history:
+                search_query = await cls.rewrite_query(history, query)
+                # 贴心提示：如果发生了改写，悄悄在最开始提示一下改写后的问题
+                if search_query != query:
+                    yield f"💡 *[智能理解：已结合上下文将提问理解为「{search_query}」]*\n\n"
 
-        # 6.吐出溯源手册
-        if hits:
-            yield "\n\n---\n📚 **参考官方手册溯源：**\n"
-            for h in hits:
-                yield f"- 《{h['title']}》 (相似度得分: {h['similarity_score']})\n"
+            # 3.拿着最精准的搜索词去查 ChromaDB
+            hits = engine.search(search_query, top_k=2)
 
-        # 7.核心闭环： 问答彻底结束后，把本轮对话存入会话历史中
-        session_memory.add_turn(session_id,query,full_assistant_reply)
+            # 【核心安全锁】：阈值过滤，低于 0.18 的弱相关手册视为“未收录”
+            valid_hits = [h for h in hits if h["similarity_score"] >= 0.18]
 
+            full_prompt = cls._build_prompt(search_query, valid_hits)
+
+            # 4. 调用大模型开启流式传输
+            # 构造发给大模型的消息：包含历史对话 + 当前增强提问
+            messages = [{"role": "system", "content": "你是由顺德智能制造基地训练的企业级售后服务专家。"}]
+            # 塞入历史消息（最近 3 轮）
+            for msg in history:
+                messages.append(msg)
+            # 塞入当前带着手册知识的完整 Prompt
+            messages.append({"role": "user", "content": full_prompt})
+
+            response = await client.chat.completions.create(
+                model=settings.LLM_MODEL,
+                messages=messages,
+                stream=True,
+                temperature=0.1
+            )
+
+            # 5.一遍yield吐字i，一边在后台攒完整回答，用于记入会话历史
+            full_assistant_reply = ""
+            async for chunk in response:
+                content = chunk.choices[0].delta.content or ""
+                if content:
+                    full_assistant_reply += content
+                    yield content
+
+            # 6.吐出溯源手册
+            if valid_hits:
+                yield "\n\n---\n📚 **参考官方手册溯源：**\n"
+                for h in valid_hits:
+                    yield f"- 《{h['title']}》 (相似度得分: {h['similarity_score']})\n"
+
+            # 7.核心闭环： 问答彻底结束后，把本轮对话存入会话历史中
+            session_memory.add_turn(session_id,query,full_assistant_reply)
+
+        except Exception as e:
+            # 【防弹衣】：捕获一切网络异常，优雅提示，绝不断网！
+            yield f"\n\n⚠️ *[服务提示：网络通信出现轻微波动，已为您保留当前进度。请重新提问或稍后重试。原因：{str(e)[:50]}]*"
 
     @classmethod
     async def rewrite_query(cls, history: list, latest_query: str) -> str:
@@ -208,6 +249,27 @@ class RAGService:
                 {"role": "user", "content": user_prompt}
             ],
             temperature = 0.0
+        )
+
+        return response.choices[0].message.content.strip()
+
+    @classmethod
+    async def classify_intent(cls, query: str) -> str:
+        """意图分诊器：判断用户是日常闲聊还是真实故障报修"""
+        system_prompt = (
+            "你是一个智能客服前台分诊器。请分析用户的输入，将其严格归类为以下两类之一：\n"
+            "- CHITCHAT：纯日常问候、打招呼、感谢、无实际业务含义的闲聊（例如：你好、在吗、谢谢、天气真好）\n"
+            "- FAULT_DIAGNOSIS：针对家电的故障咨询、使用疑问、报错代码、异常排查\n\n"
+            "注意：你只能输出单词 CHITCHAT 或 FAULT_DIAGNOSIS，严禁输出任何多余的标点或汉字！"
+        )
+        response = await client.chat.completions.create(
+            model=settings.LLM_MODEL,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": query}
+            ],
+            temperature=0.0,
+            max_tokens=10
         )
 
         return response.choices[0].message.content.strip()
