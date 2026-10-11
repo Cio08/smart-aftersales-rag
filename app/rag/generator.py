@@ -1,13 +1,14 @@
 import asyncio
-from idlelib import history
 from pathlib import Path
 from typing import Dict, Any, List
-from openai import AsyncOpenAI, admin_api_key
-from pygments.styles.dracula import yellow
+from openai import AsyncOpenAI
+import json
 
 from app.core.config import settings
 from app.rag.chroma_engine import ChromaRAGEngine as RAGEngine
 from app.rag.memory import session_memory
+from app.tools.order_tool import TOOLS_DEFINITION, dispatch_tool
+
 
 # 1. 初始化标准异步大模型客户端
 client = AsyncOpenAI(
@@ -40,18 +41,20 @@ class RAGService:
 
         prompt =f"""你是一名专业的售后急诊技术专家。请务必【拒绝套话废话，一针见血，直奔用户核心问题】！
 
-【官方维修手册参考资料】：
-{ref_text}
-
-【用户问题】：
-{query}
-
-【回答规则（严守逻辑，拒绝僵化）】：
-1. 严禁寒暄废话（禁止“您好很高兴为您服务”等套话）。
-2. 根据用户的具体提问类型，自适应组织回答：
-   - 【如果用户询问排查/维修方法】：先给出 🚨 **【核心结论】**，再给出最多 3 步的 🛠️ **【处置步骤】**（动词加粗），最后说明 ⚠️ **【何时报修】**。
-   - 【如果用户询问费用/价格/售后流程等非排查问题】：直接给出清晰答复！【严禁无意义地复读故障排查步骤】！若手册未提及价格，直接明确说明手册不含报价，并用 1~2 句话告知用户联系官方客服核价的途径。
-3. 未收录内容切勿捏造，清晰分流至人工。"""
+                    【官方维修手册参考资料】：
+                    {ref_text}
+                    
+                    【用户问题】：
+                    {query}
+                    
+                    【回答规则（严守逻辑，拒绝僵化）】：
+                    1. 严禁寒暄废话（禁止“您好很高兴为您服务”等套话）。
+                    2. 【排查优先原则】：若用户咨询故障，必须先给出 🚨 **【核心结论】**，再给出最多 3 步的 🛠️ **【处置步骤】**（动词加粗），最后说明 ⚠️ **【何时报修】**。
+                    3. 【主动派单原则】：如果用户已明确尝试过排查无效、涉及硬件损坏必须换件，或用户明确要求“帮我预约师傅上门/报修”：
+                       - 若用户已提供家电、电话、地址，请直接调用工具 `book_repair_technician` 录入工单！
+                       - 若用户尚未提供电话或地址，请友好提醒用户留下联系电话和详细地址，以便安排师傅。
+                    4. 【品类限定原则】：若用户询问非洗碗机品类（如洗衣机、冰箱等），严禁调用派单工具，必须明确告知当前仅支持洗碗机售后，并引导其拨打官方人工客服。
+                """
         return prompt
 
     @classmethod
@@ -200,17 +203,81 @@ class RAGService:
             response = await client.chat.completions.create(
                 model=settings.LLM_MODEL,
                 messages=messages,
+                tools=TOOLS_DEFINITION,     # 递上派单工具箱
+                tool_choice="auto",
                 stream=True,
                 temperature=0.1
             )
 
-            # 5.一遍yield吐字i，一边在后台攒完整回答，用于记入会话历史
-            full_assistant_reply = ""
+            # 5. 一边接收数据流，一边判断：大模型是在打字，还是在发调用指令？
+            tool_calls_accumulator = {}
+
             async for chunk in response:
-                content = chunk.choices[0].delta.content or ""
-                if content:
-                    full_assistant_reply += content
-                    yield content
+                delta = chunk.choices[0].delta
+
+                # 情况A： 大模型发来了工具调用的参数碎片
+                if delta.tool_calls:
+                    for tc in delta.tool_calls:
+                        idx = tc.index
+                        # 先看看该碎片的信息受否已收录，没收录的话，以该碎片的索引为键，创建字典记录
+                        if idx not in tool_calls_accumulator:
+                            tool_calls_accumulator[idx] = {
+                                "id": tc.id or "",
+                                "name": tc.function.name or "",
+                                "arguments": tc.function.arguments or ""
+                            }
+                        # 由于是流式输出，所以工具调用的参数会有碎片形式传回，那么碎片的索引一致的均存入以索引为键，其余参数为值的键值对中
+                        else:
+                            if tc.id:tool_calls_accumulator[idx]["id"] += tc.id
+                            if tc.function.name: tool_calls_accumulator[idx]["name"] += tc.function.name
+                            if tc.function.arguments: tool_calls_accumulator[idx]["arguments"] += tc.function.arguments
+
+                # 情况B： 大模型在正常打字回答
+                elif delta.content:
+                    # 那么就边吐字回答边记录回复碎片
+                    full_assistant_reply += delta.content
+                    yield delta.content
+
+            # 如果大模型决定调用工具派单
+            if tool_calls_accumulator:
+                # 取出要调用的工具信息
+                tc = tool_calls_accumulator[0]
+                func_name = tc["name"]
+                func_args = json.loads(tc["arguments"])
+
+                # 网页提醒
+                yield "🛠️ *[系统自动调度：正在核验信息并录入顺德售后派工系统...]*\n\n"
+
+                # 本地手脚真正执行写入数据库
+                tool_result = dispatch_tool(func_name, func_args)
+
+                # 将工具调用指令与执行结果追加进消息历史
+                messages.append({
+                    "role": "assistant",
+                    "tool_calls": [{
+                        "id": tc["id"],
+                        "type": "function",
+                        "function": {"name": func_name, "arguments": tc["arguments"]}
+                    }]
+                })
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": tc["id"],
+                    "content": tool_result
+                })
+
+                # 二次流式调用大模型：让它根据工单回执输出最终的体贴回复
+                final_stream = await client.chat.completions.create(
+                    model=settings.LLM_MODEL,
+                    messages=messages,
+                    stream=True,
+                    temperature=0.1
+                )
+                async for chunk in final_stream:
+                    content = chunk.choices[0].delta.content or ""
+                    if content:
+                        full_assistant_reply += content
+                        yield content
 
             # 6.吐出溯源手册
             if valid_hits:
@@ -278,7 +345,7 @@ class RAGService:
 # 本地异步自测逻辑
 if __name__ == "__main__":
     async def test():
-        test_q = "师傅你好，我洗碗机报错 E01 该怎么修？"
+        test_q = "师傅你好，我家洗碗机漏水报错E04，我已经断电关水阀了，帮我叫师傅上门修一下吧，我电话是19203551306，地址在勒流公舍二楼"
         print(f"📡 正在向大模型发起异步提问: 【{test_q}】...\n")
 
         # 用 async for 接住我们新写的流式水龙头！
