@@ -1,7 +1,7 @@
 import uuid
 import httpx
 import streamlit as st
-from app.db.database import get_recent_orders
+from app.db.database import get_recent_orders, get_session_chat_logs
 
 # 1. 页面基本配置
 st.set_page_config(
@@ -53,6 +53,18 @@ with st.sidebar:
                 st.markdown(f"**派工状态**：🟡 `{ord['status']}`")
                 st.caption(f"🕒 下单时间：{ord['created_at']}")
 
+                # 🌟 【企业级问诊溯源】：点击展开此单产生时的全部聊天记录
+                session_id = ord.get("session_id", "default")
+                chat_logs = get_session_chat_logs(session_id)
+                with st.expander("💬 报修排查问诊记录", expanded=False):
+                    if not chat_logs:
+                        st.caption("暂无问诊记录（离线或历史导入工单）")
+                    else:
+                        for log in chat_logs:
+                            icon = "👤" if log["role"] == "user" else "🤖"
+                            role_name = "用户" if log["role"] == "user" else "AI专家"
+                            st.markdown(f"**{icon} {role_name}** (`{log['created_at'][11:]}`):")
+                            st.caption(log["content"][:120] + ("..." if len(log["content"]) > 120 else ""))
 # 3. 页面大标题与介绍
 st.title("🔧 智能家电售后专家")
 st.caption("🚀 顺德智能制造知识库实时驱动 | 毫秒级语义溯源 | 自动派工 Agent")

@@ -1,4 +1,5 @@
 from typing import List,Dict,Any
+from app.db.database import save_chat_message
 
 class SessionMemory:
     """简单的内存会话记忆管理器"""
@@ -17,13 +18,17 @@ class SessionMemory:
         if session_id not in self._store:
             self._store[session_id] = []
 
-        # 追加本轮的一问一答
+        # 1. 内存高速缓存（给滑动窗口使用）
         self._store[session_id].append({"role": "user", "content": user_query})
         self._store[session_id].append({"role": "assistant", "content": assistant_reply})
 
         # 核心：使用负数切片 [-6:]，永远只保留最近的最新对话，防止撑爆上下文！
         if len(self._store[session_id]) > self.max_messages:
             self._store[session_id] = self._store[session_id][-self.max_messages:]
+
+        # 2. 🌟 数据库永久归档（用于全链路工单排查溯源）
+        save_chat_message(session_id, "user", user_query)
+        save_chat_message(session_id, "assistant", assistant_reply)
 
 # 单例导出供全项目使用
 session_memory = SessionMemory(max_history_turns=3)

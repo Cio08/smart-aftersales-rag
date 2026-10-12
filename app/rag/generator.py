@@ -54,6 +54,9 @@ class RAGService:
                        - 若用户已提供家电、电话、地址，请直接调用工具 `book_repair_technician` 录入工单！
                        - 若用户尚未提供电话或地址，请友好提醒用户留下联系电话和详细地址，以便安排师傅。
                     4. 【品类限定原则】：若用户询问非洗碗机品类（如洗衣机、冰箱等），严禁调用派单工具，必须明确告知当前仅支持洗碗机售后，并引导其拨打官方人工客服。
+                    5. 【工单查询原则】：若用户询问报修进度、催单、查单，或提供了手机号/工单号查询：
+                        - 请直接调用工具 `query_repair_order` 进行检索！
+                        - 拿到查询结果后，向用户清晰同步工单编号、当前处理状态、家电及报修时间。
                 """
         return prompt
 
@@ -246,10 +249,14 @@ class RAGService:
                 func_args = json.loads(tc["arguments"])
 
                 # 网页提醒
-                yield "🛠️ *[系统自动调度：正在核验信息并录入顺德售后派工系统...]*\n\n"
+                # 网页自适应状态提示
+                if func_name == "book_repair_technician":
+                    yield "🛠️ *[系统自动调度：正在核验信息并录入顺德售后派工系统...]*\n\n"
+                elif func_name == "query_repair_order":
+                    yield "🔍 *[系统自动调度：正在调取数据库查询您的报修工单记录...]*\n\n"
 
                 # 本地手脚真正执行写入数据库
-                tool_result = dispatch_tool(func_name, func_args)
+                tool_result = dispatch_tool(func_name, func_args, session_id=session_id)
 
                 # 将工具调用指令与执行结果追加进消息历史
                 messages.append({
@@ -327,7 +334,7 @@ class RAGService:
         system_prompt = (
             "你是一个智能客服前台分诊器。请分析用户的输入，将其严格归类为以下两类之一：\n"
             "- CHITCHAT：纯日常问候、打招呼、感谢、无实际业务含义的闲聊（例如：你好、在吗、谢谢、天气真好）\n"
-            "- FAULT_DIAGNOSIS：针对家电的故障咨询、使用疑问、报错代码、异常排查\n\n"
+            "- FAULT_DIAGNOSIS：针对家电的故障咨询、使用疑问、报错排查、上门报修申请、或工单进度查询等售后业务操作\n\n"
             "注意：你只能输出单词 CHITCHAT 或 FAULT_DIAGNOSIS，严禁输出任何多余的标点或汉字！"
         )
         response = await client.chat.completions.create(
@@ -345,7 +352,7 @@ class RAGService:
 # 本地异步自测逻辑
 if __name__ == "__main__":
     async def test():
-        test_q = "师傅你好，我家洗碗机漏水报错E04，我已经断电关水阀了，帮我叫师傅上门修一下吧，我电话是19203551306，地址在勒流公舍二楼"
+        test_q = "师傅你好，帮我查一下我之前报修的进度，我手机号是 19203551306"
         print(f"📡 正在向大模型发起异步提问: 【{test_q}】...\n")
 
         # 用 async for 接住我们新写的流式水龙头！
