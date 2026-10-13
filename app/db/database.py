@@ -156,27 +156,51 @@ def get_session_chat_logs(session_id: str) -> list:
         rows = cursor.fetchall()
         return [dict(row) for row in rows]
 
+def get_orders_statistics() -> dict:
+    """统计各类状态的工单数量（用于主管看板 KPI 呈现）"""
+    init_db()
+    with sqlite3.connect(DB_PATA) as conn:
+        cursor = conn.cursor()
+        # 统计总数
+        cursor.execute("SELECT COUNT(*) FROM repair_orders")
+        total = cursor.fetchone()[0]
 
-# if __name__ == '__main__':
-#     test_order = insert_repair_order(
-#         appliance="洗碗机",
-#         phone="13800138000",
-#         address="顺德容桂大道北1号",
-#         fault_desc="E01进水超时"
-#     )
-#     print("✅ 成功插入工单:", test_order)
-#     orders = get_recent_orders()
-#     print(f"📊 数据库当前共有 {len(orders)} 条工单")
+        # 统计待派工
+        cursor.execute("SELECT COUNT(*) FROM repair_orders WHERE status = '待派工'")
+        pending = cursor.fetchone()[0]
+
+        # 统计维修中
+        cursor.execute("SELECT COUNT(*) FROM repair_orders WHERE status = '维修中'")
+        processing = cursor.fetchone()[0]
+
+        # 统计已完工
+        cursor.execute("SELECT COUNT(*) FROM repair_orders WHERE status = '已完工'")
+        completed = cursor.fetchone()[0]
+
+        return {
+            "total": total,
+            "pending": pending,
+            "processing": processing,
+            "completed": completed
+        }
+
+
+def update_order_status(order_no: str, new_status: str) -> bool:
+    """主管调度操作：修改工单状态（如：待派工 -> 维修中 -> 已完工）"""
+    init_db()
+    with sqlite3.connect(DB_PATA) as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            UPDATE repair_orders 
+            SET status = ? 
+            WHERE order_no = ?
+        """, (new_status, order_no))
+        conn.commit()
+        # cursor.rowcount 表示本次 SQL 实际影响/修改了多少行
+        return cursor.rowcount > 0
+
 
 if __name__ == '__main__':
-    # 1. 模拟查重：检查刚才你的手机号有没有待派工单
-    test_phone = "19203551306"
-    test_appliance = "洗碗机"
-    pending = check_existing_pending_order(test_phone, test_appliance)
-    print("🔍 查重结果:", pending)
-
-    # 2. 模拟查单：用手机号模糊搜索
-    history = query_orders_by_keyword("1920355")
-    print(f"📋 查找到 {len(history)} 条关联工单:")
-    for h in history:
-        print(f"   - [{h['order_no']}] {h['appliance']} | 状态：{h['status']}")
+    # 测试统计
+    stats = get_orders_statistics()
+    print("📊 当前工单统计:", stats)
