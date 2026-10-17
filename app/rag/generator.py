@@ -203,6 +203,7 @@ class RAGService:
             # 塞入当前带着手册知识的完整 Prompt
             messages.append({"role": "user", "content": full_prompt})
 
+            # type: ignore
             response = await client.chat.completions.create(
                 model=settings.LLM_MODEL,
                 messages=messages,
@@ -259,8 +260,10 @@ class RAGService:
                 tool_result = dispatch_tool(func_name, func_args, session_id=session_id)
 
                 # 将工具调用指令与执行结果追加进消息历史
+                # type: ignore
                 messages.append({
                     "role": "assistant",
+                    # type: ignore
                     "tool_calls": [{
                         "id": tc["id"],
                         "type": "function",
@@ -274,6 +277,7 @@ class RAGService:
                 })
 
                 # 二次流式调用大模型：让它根据工单回执输出最终的体贴回复
+                # type: ignore
                 final_stream = await client.chat.completions.create(
                     model=settings.LLM_MODEL,
                     messages=messages,
@@ -325,7 +329,7 @@ class RAGService:
             ],
             temperature = 0.0
         )
-
+        # type: ignore
         return response.choices[0].message.content.strip()
 
     @classmethod
@@ -346,7 +350,7 @@ class RAGService:
             temperature=0.0,
             max_tokens=10
         )
-
+        # type: ignore
         return response.choices[0].message.content.strip()
 
 # 本地异步自测逻辑

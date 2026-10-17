@@ -1,11 +1,12 @@
-import uuid
+﻿import uuid
 import httpx
 import streamlit as st
 from app.db.database import (
     get_recent_orders,
     get_session_chat_logs,
     get_orders_statistics,
-    update_order_status
+    update_order_status,
+    get_distinct_sessions
 )
 
 # 1. 页面基本配置
@@ -32,13 +33,65 @@ with st.sidebar:
         st.session_state.session_id = f"user_{uuid.uuid4().hex[:6]}"
 
     if role == "👤 客户报修与问诊":
-        st.info(f"🆔 当前会话: `{st.session_state.session_id}`")
-        if st.button("🧹 开启新对话", use_container_width=True):
+        st.subheader("💬 会话管理")
+        if st.button("➕ 开启新对话", use_container_width=True, type="primary"):
+            new_id = f"user_{uuid.uuid4().hex[:6]}"
+            st.session_state.session_id = new_id
+
+            # 🌟 关键解药：强制同步下拉组件的 key 缓存，防止它倒退回旧会话！
+            st.session_state["session_selector"] = new_id
+
             st.session_state.messages = [
                 {"role": "assistant", "content": "您好！我是顺德家电智能售后专家，请问您的机器遇到了什么故障？"}
             ]
-            st.session_state.session_id = f"user_{uuid.uuid4().hex[:6]}"
             st.rerun()
+
+        st.caption(f"🆔 当前会话: `{st.session_state.session_id}`")
+
+        # 🌟 核心升级：从 SQLite 调取历史活跃会话列表供用户自由切换
+        recent_sessions = get_distinct_sessions(limit=10)
+
+        session_options = []
+        session_label_map = {}
+
+        current_sid = st.session_state.session_id
+        is_current_in_db = any(s["session_id"] == current_sid for s in recent_sessions)
+
+        if not is_current_in_db:
+            label = f"✨ 当前新对话 ({current_sid})"
+            session_options.append(current_sid)
+            session_label_map[current_sid] = label
+
+        for s in recent_sessions:
+            sid = s["session_id"]
+            time_str = s["last_active"][5:16] if len(s["last_active"]) >= 16 else s["last_active"]
+            label = f"💬 {sid} ({s['msg_count']}条 · {time_str})"
+            session_options.append(sid)
+            session_label_map[sid] = label
+
+        if session_options:
+            selected_idx = session_options.index(current_sid) if current_sid in session_options else 0
+            chosen_sid = st.selectbox(
+                "📜 历史对话切换",
+                options=session_options,
+                format_func=lambda x: session_label_map.get(x, x),
+                index=selected_idx,
+                key="session_selector"
+            )
+            # 用户在下拉菜单切换了会话
+            if chosen_sid != current_sid:
+                st.session_state.session_id = chosen_sid
+                db_logs = get_session_chat_logs(chosen_sid)
+                if db_logs:
+                    st.session_state.messages = [
+                        {"role": log["role"], "content": log["content"]} for log in db_logs
+                    ]
+                else:
+                    st.session_state.messages = [
+                        {"role": "assistant", "content": "您好！我是顺德家电智能售后专家，请问您的机器遇到了什么故障？"}
+                    ]
+                st.rerun()
+
     else:
         st.caption("🔑 已进入管理权限模式")
         st.caption("负责区域工单调度、进度流转与服务质检。")
@@ -50,11 +103,17 @@ if role == "👤 客户报修与问诊":
     st.title("🔧 智能家电售后专家")
     st.caption("🚀 顺德智能制造知识库实时驱动 | 毫秒级语义溯源 | 自动化派工 Agent")
 
-    # 初始化历史消息抽屉
+    # 初始化历史消息抽屉（优先从 SQLite 回填）
     if "messages" not in st.session_state:
-        st.session_state.messages = [
-            {"role": "assistant", "content": "您好！我是顺德家电智能售后专家，请问您的机器遇到了什么故障？"}
-        ]
+        db_logs = get_session_chat_logs(st.session_state.session_id)
+        if db_logs:
+            st.session_state.messages = [
+                {"role": log["role"], "content": log["content"]} for log in db_logs
+            ]
+        else:
+            st.session_state.messages = [
+                {"role": "assistant", "content": "您好！我是顺德家电智能售后专家，请问您的机器遇到了什么故障？"}
+            ]
 
     # 渲染历史聊天气泡
     for msg in st.session_state.messages:

@@ -141,6 +141,46 @@ def save_chat_message(session_id: str, role: str, content: str):
         conn.commit()
 
 
+def get_recent_chat_messages(session_id: str, limit: int = 6) -> list:
+    """
+    获取某个会话最近的 N 条聊天消息（按时间升序排列）
+    🌟 核心：专供 SessionMemory 内存冷启动/缓存穿透时回源兜底
+    采用子查询倒序截取最新 N 条，外层升序还原时间线
+    """
+    init_db()
+    with sqlite3.connect(DB_PATA) as conn:
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT role, content FROM (
+                SELECT id, role, content 
+                FROM chat_messages 
+                WHERE session_id = ? 
+                ORDER BY id DESC 
+                LIMIT ?
+            ) ORDER BY id ASC
+        """, (session_id, limit))
+        rows = cursor.fetchall()
+        return [{"role": r["role"], "content": r["content"]} for r in rows]
+
+
+def get_distinct_sessions(limit: int = 15) -> list:
+    """获取最近活跃的会话列表，供前端切换历史会话"""
+    init_db()
+    with sqlite3.connect(DB_PATA) as conn:
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT session_id, MAX(created_at) as last_active, COUNT(id) as msg_count
+            FROM chat_messages
+            GROUP BY session_id
+            ORDER BY last_active DESC
+            LIMIT ?
+        """, (limit,))
+        rows = cursor.fetchall()
+        return [dict(r) for r in rows]
+
+
 def get_session_chat_logs(session_id: str) -> list:
     """根据 session_id 提取该次会话的所有聊天历史（用于排查溯源）"""
     init_db()

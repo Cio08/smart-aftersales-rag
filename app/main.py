@@ -26,7 +26,7 @@ class ChatResponse(BaseModel):
         answer: str
         references: List[Dict[str, Any]]
 
-# 编写核心 API 接口路由与启动入口
+# 编写核心 API 接口路由以及启动入口
 @app.post("/api/v1/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest):
     result = await RAGService.ask(request.question)
@@ -45,6 +45,7 @@ async def chat_stream(request: ChatRequest):
     直接把 RAG 生成器对接给客户端，实现毫秒级首字响应！
     """
     return StreamingResponse(
+        # type: ignore
         RAGService.ask_stream(request.question, session_id=request.session_id),
         media_type="text/plain; charset=utf-8"
     )
